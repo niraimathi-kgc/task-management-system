@@ -1,20 +1,38 @@
-import { io, Socket } from 'socket.io-client'
+import { Manager } from 'socket.io-client'
+import { authService } from './auth'
+
+interface TaskUpdate {
+  id: number
+  type: 'create' | 'update' | 'delete'
+  data: any
+}
 
 class WebSocketService {
-  private socket: Socket | null = null
-  private taskUpdateCallbacks: ((data: any) => void)[] = []
+  private socket: ReturnType<typeof Manager.prototype.socket> | null = null
+  private taskUpdateCallbacks: ((data: TaskUpdate) => void)[] = []
 
   connect() {
+    if (typeof window === 'undefined') {
+      return // Don't connect during SSR
+    }
+
     if (!this.socket) {
-      this.socket = io('ws://localhost:8000/ws/tasks/', {
+      const token = authService.getAccessToken()
+      const manager = new Manager(process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/tasks/', {
         transports: ['websocket'],
         auth: {
-          token: localStorage.getItem('token'),
+          token,
         },
       })
+      
+      this.socket = manager.socket('/')
 
-      this.socket.on('task_update', (data) => {
+      this.socket.on('task_update', (data: TaskUpdate) => {
         this.taskUpdateCallbacks.forEach((callback) => callback(data))
+      })
+
+      this.socket.on('connect_error', (error: Error) => {
+        console.error('WebSocket connection error:', error)
       })
     }
   }
@@ -26,7 +44,7 @@ class WebSocketService {
     }
   }
 
-  onTaskUpdate(callback: (data: any) => void) {
+  onTaskUpdate(callback: (data: TaskUpdate) => void) {
     this.taskUpdateCallbacks.push(callback)
     return () => {
       this.taskUpdateCallbacks = this.taskUpdateCallbacks.filter(
